@@ -259,4 +259,59 @@
     (map-get? appeals assessment-id)
 )
 
+;; @desc Resolve an appeal by either approving it for re-assessment or rejecting it.
+;; This function ensures that only an authorized assessor or the owner can decide
+;; the outcome of a pending appeal. If approved, the assessment state is cleared,
+;; allowing a new assessment to take place. If rejected, the status is updated.
+(define-public (resolve-appeal (assessment-id uint) (approve bool))
+    (let
+        (
+            (assessment (unwrap! (map-get? assessments assessment-id) err-not-found))
+            (appeal-record (unwrap! (map-get? appeals assessment-id) err-not-found))
+        )
+        (try! (check-not-paused))
+        
+        ;; Security check: only authorized assessors or owner can resolve an appeal
+        (asserts! (or (is-eq tx-sender contract-owner) (is-assessor tx-sender)) err-unauthorized)
+        
+        ;; Ensure the appeal is currently pending
+        (asserts! (is-eq (get status appeal-record) "pending") err-invalid-status)
+        
+        (if approve
+            (begin
+                ;; If approved, reset the assessment state to prepare for the re-evaluation
+                (map-set assessments assessment-id 
+                    (merge assessment {
+                        vulnerability-score: u0,
+                        complexity-score: u0,
+                        centralization-score: u0,
+                        overall-risk: u0,
+                        is-assessed: false,
+                        flagged: false
+                    })
+                )
+                (map-set appeals assessment-id 
+                    (merge appeal-record {
+                        status: "approved",
+                        resolved-by: (some tx-sender)
+                    })
+                )
+                (print { event: "appeal-resolved", id: assessment-id, status: "approved", resolved-by: tx-sender })
+                (ok true)
+            )
+            (begin
+                ;; If rejected, simply update the appeal status, preserving the old assessment
+                (map-set appeals assessment-id 
+                    (merge appeal-record {
+                        status: "rejected",
+                        resolved-by: (some tx-sender)
+                    })
+                )
+                (print { event: "appeal-resolved", id: assessment-id, status: "rejected", resolved-by: tx-sender })
+                (ok true)
+            )
+        )
+    )
+)
+
 
